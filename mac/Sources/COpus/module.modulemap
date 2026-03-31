@@ -1,0 +1,5 @@
+module COpus [system] {
+    header "/opt/homebrew/include/opus/opus.h"
+    link "opus"
+    export *
+}

@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">Audio Relay</string>
+    <string name="notification_channel_name">音频转发服务</string>
+    <string name="notification_channel_description">音频捕获和转发服务运行中</string>
+    <string name="notification_title">Audio Relay 运行中</string>
+    <string name="notification_text_idle">等待连接...</string>
+    <string name="notification_text_connected">音频转发中</string>
+    <string name="notification_text_muted">音频已转发到 Mac，本地已静音</string>
+</resources>
