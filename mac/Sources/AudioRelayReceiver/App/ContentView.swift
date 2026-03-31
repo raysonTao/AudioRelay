@@ -185,6 +185,17 @@ struct ContentView: View {
                     .frame(width: 36, alignment: .trailing)
             }
 
+            // Noise reduction toggle
+            HStack {
+                Label("Noise Reduction", systemImage: "waveform.circle")
+                    .font(.subheadline)
+                    .foregroundColor(.secondary)
+                Spacer()
+                Toggle("", isOn: $viewModel.noiseReductionEnabled)
+                    .labelsHidden()
+                    .toggleStyle(.switch)
+            }
+
             // Buffer level
             MeterBar(
                 label: "Buffer",
@@ -326,6 +337,9 @@ final class ContentViewModel: ObservableObject {
     @Published var manualPort: String = "48000"
     @Published var volume: Double = 1.0 {
         didSet { audioPlayer.volume = Float(volume) }
+    }
+    @Published var noiseReductionEnabled: Bool = false {
+        didSet { audioPlayer.noiseReductionEnabled = noiseReductionEnabled }
     }
 
     private let browser = MdnsBrowser()

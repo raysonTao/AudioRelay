@@ -25,6 +25,9 @@ final class AudioPlayer {
         set { engine.mainMixerNode.outputVolume = max(0, min(1, newValue)) }
     }
 
+    /// When enabled, applies de-clicker to reduce crackling artifacts.
+    var noiseReductionEnabled: Bool = false
+
     func start(jitterBuffer: JitterBuffer, decoder: OpusDecoder) {
         guard !isPlaying else { return }
 
@@ -39,6 +42,8 @@ final class AudioPlayer {
         )!
 
         var residual = [Float]()
+        // Previous sample per channel for de-click detection (L, R interleaved).
+        var prevSample: (Float, Float) = (0, 0)
 
         let node = AVAudioSourceNode(format: audioFormat) {
             [weak self] _, _, frameCount, audioBufferList -> OSStatus in
@@ -89,6 +94,41 @@ final class AudioPlayer {
                 samples = Array(samples[..<interleavedCount])
             } else {
                 residual = []
+            }
+
+            // --- Noise reduction: de-clicker ---
+            // Detects sudden sample-to-sample jumps (clicks/pops) and
+            // replaces them with interpolated values.
+            if self.noiseReductionEnabled && samples.count >= 2 {
+                let clickThreshold: Float = 0.15
+                var pL = prevSample.0
+                var pR = prevSample.1
+
+                // Interleaved: [L0, R0, L1, R1, ...]
+                var i = 0
+                while i < samples.count - 1 {
+                    let curL = samples[i]
+                    let curR = samples[i + 1]
+
+                    // If jump from previous sample is too large, smooth it.
+                    if abs(curL - pL) > clickThreshold {
+                        samples[i] = pL * 0.7 + curL * 0.3
+                    }
+                    if abs(curR - pR) > clickThreshold {
+                        samples[i + 1] = pR * 0.7 + curR * 0.3
+                    }
+
+                    pL = samples[i]
+                    pR = samples[i + 1]
+                    i += 2
+                }
+
+                prevSample = (pL, pR)
+            } else if !self.noiseReductionEnabled {
+                // Keep tracking last sample even when disabled, for clean switch-on.
+                if samples.count >= 2 {
+                    prevSample = (samples[samples.count - 2], samples[samples.count - 1])
+                }
             }
 
             // RMS level.
