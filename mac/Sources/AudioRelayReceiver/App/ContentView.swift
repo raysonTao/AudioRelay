@@ -169,6 +169,22 @@ struct ContentView: View {
             Label("Audio", systemImage: "speaker.wave.2")
                 .font(.headline)
 
+            // Volume control
+            HStack(spacing: 8) {
+                Image(systemName: "speaker.fill")
+                    .foregroundColor(.secondary)
+                    .frame(width: 16)
+                Slider(value: $viewModel.volume, in: 0...1)
+                Image(systemName: "speaker.wave.3.fill")
+                    .foregroundColor(.secondary)
+                    .frame(width: 16)
+                Text("\(Int(viewModel.volume * 100))%")
+                    .font(.caption)
+                    .monospacedDigit()
+                    .foregroundColor(.secondary)
+                    .frame(width: 36, alignment: .trailing)
+            }
+
             // Buffer level
             MeterBar(
                 label: "Buffer",
@@ -308,6 +324,9 @@ final class ContentViewModel: ObservableObject {
     @Published var discoveredServices: [DiscoveredService] = []
     @Published var manualHost: String = ""
     @Published var manualPort: String = "48000"
+    @Published var volume: Double = 1.0 {
+        didSet { audioPlayer.volume = Float(volume) }
+    }
 
     private let browser = MdnsBrowser()
     private let tcpClient = TcpClient()

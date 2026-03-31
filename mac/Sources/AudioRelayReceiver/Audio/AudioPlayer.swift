@@ -19,6 +19,12 @@ final class AudioPlayer {
     private(set) var isPlaying = false
     private var primed = false
 
+    /// Output volume (0.0 – 1.0). Can be changed while playing.
+    var volume: Float {
+        get { engine.mainMixerNode.outputVolume }
+        set { engine.mainMixerNode.outputVolume = max(0, min(1, newValue)) }
+    }
+
     func start(jitterBuffer: JitterBuffer, decoder: OpusDecoder) {
         guard !isPlaying else { return }
 
