@@ -1,5 +1,6 @@
 import Foundation
 import COpus
+import COpusHelpers
 
 /// Error type for Opus decoding failures.
 enum OpusDecoderError: Error {
@@ -73,6 +74,12 @@ final class OpusDecoder {
             output.removeSubrange(totalSamples..<output.count)
         }
         return output
+    }
+
+    /// Resets the decoder's internal state. Useful when the audio source changes
+    /// abruptly (e.g. new video, seek) and the decoder's prediction model is stale.
+    func resetState() {
+        opus_helpers_decoder_reset(decoder)
     }
 
     /// Generates a frame of audio using Opus packet loss concealment (PLC).

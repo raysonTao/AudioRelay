@@ -42,8 +42,10 @@ final class AudioPlayer {
         )!
 
         var residual = [Float]()
-        // Previous sample per channel for de-click detection (L, R interleaved).
+        // Previous sample per channel for de-click detection.
         var prevSample: (Float, Float) = (0, 0)
+        // Consecutive empty-pull counter for re-prime after idle.
+        var emptyPullCount = 0
 
         let node = AVAudioSourceNode(format: audioFormat) {
             [weak self] _, _, frameCount, audioBufferList -> OSStatus in
@@ -96,21 +98,33 @@ final class AudioPlayer {
                 residual = []
             }
 
+            // Re-prime after idle: if buffer has been empty for ~0.5s (25 callbacks),
+            // go back to pre-buffer mode so we accumulate packets before resuming.
+            if jitterBuffer.packetCount == 0 {
+                emptyPullCount += 1
+                if emptyPullCount > 25 {
+                    self.primed = false
+                    residual = []
+                    emptyPullCount = 0
+                    decoder.resetState()
+                    prevSample = (0, 0)
+                    print("[AudioPlayer] Buffer empty for too long, re-priming")
+                }
+            } else {
+                emptyPullCount = 0
+            }
+
             // --- Noise reduction: de-clicker ---
-            // Detects sudden sample-to-sample jumps (clicks/pops) and
-            // replaces them with interpolated values.
             if self.noiseReductionEnabled && samples.count >= 2 {
                 let clickThreshold: Float = 0.15
                 var pL = prevSample.0
                 var pR = prevSample.1
 
-                // Interleaved: [L0, R0, L1, R1, ...]
                 var i = 0
                 while i < samples.count - 1 {
                     let curL = samples[i]
                     let curR = samples[i + 1]
 
-                    // If jump from previous sample is too large, smooth it.
                     if abs(curL - pL) > clickThreshold {
                         samples[i] = pL * 0.7 + curL * 0.3
                     }
@@ -124,8 +138,7 @@ final class AudioPlayer {
                 }
 
                 prevSample = (pL, pR)
-            } else if !self.noiseReductionEnabled {
-                // Keep tracking last sample even when disabled, for clean switch-on.
+            } else {
                 if samples.count >= 2 {
                     prevSample = (samples[samples.count - 2], samples[samples.count - 1])
                 }

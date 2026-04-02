@@ -15,9 +15,15 @@ let package = Package(
                 .brew(["opus"])
             ]
         ),
+        .target(
+            name: "COpusHelpers",
+            dependencies: ["COpus"],
+            path: "Sources/COpusHelpers",
+            publicHeadersPath: "include"
+        ),
         .executableTarget(
             name: "AudioRelayReceiver",
-            dependencies: ["COpus"],
+            dependencies: ["COpus", "COpusHelpers"],
             path: "Sources/AudioRelayReceiver"
         ),
     ]

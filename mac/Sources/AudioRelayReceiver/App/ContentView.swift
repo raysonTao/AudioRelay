@@ -33,10 +33,10 @@ struct ContentView: View {
         }
         .frame(minWidth: 400, minHeight: 500)
         .onAppear {
-            viewModel.startDiscovery()
+            viewModel.isSearching = true
         }
         .onDisappear {
-            viewModel.stopDiscovery()
+            viewModel.isSearching = false
         }
     }
 
@@ -107,10 +107,17 @@ struct ContentView: View {
 
     private var discoveredServicesSection: some View {
         VStack(alignment: .leading, spacing: 8) {
-            Label("Discovered Devices", systemImage: "wifi")
-                .font(.headline)
+            HStack {
+                Label("Discovered Devices", systemImage: "wifi")
+                    .font(.headline)
+                Spacer()
+                Toggle("", isOn: $viewModel.isSearching)
+                    .labelsHidden()
+                    .toggleStyle(.switch)
+                    .disabled(viewModel.state.isActive)
+            }
 
-            if viewModel.discoveredServices.isEmpty {
+            if viewModel.isSearching && viewModel.discoveredServices.isEmpty {
                 HStack {
                     ProgressView()
                         .scaleEffect(0.7)
@@ -119,6 +126,11 @@ struct ContentView: View {
                         .foregroundColor(.secondary)
                 }
                 .padding(.vertical, 8)
+            } else if !viewModel.isSearching && viewModel.discoveredServices.isEmpty {
+                Text("Toggle search to discover devices")
+                    .font(.subheadline)
+                    .foregroundColor(.secondary)
+                    .padding(.vertical, 8)
             } else {
                 ForEach(viewModel.discoveredServices) { service in
                     ServiceRow(
@@ -335,6 +347,23 @@ final class ContentViewModel: ObservableObject {
     @Published var discoveredServices: [DiscoveredService] = []
     @Published var manualHost: String = ""
     @Published var manualPort: String = "48000"
+    private var searchTimer: Timer?
+
+    @Published var isSearching: Bool = false {
+        didSet {
+            searchTimer?.invalidate()
+            searchTimer = nil
+            if isSearching {
+                discoveredServices.removeAll()
+                browser.startBrowsing()
+                searchTimer = Timer.scheduledTimer(withTimeInterval: 60, repeats: false) { [weak self] _ in
+                    DispatchQueue.main.async { self?.isSearching = false }
+                }
+            } else {
+                browser.stopBrowsing()
+            }
+        }
+    }
     @Published var volume: Double = 1.0 {
         didSet { audioPlayer.volume = Float(volume) }
     }
@@ -358,6 +387,7 @@ final class ContentViewModel: ObservableObject {
 
     deinit {
         metricsTimer?.invalidate()
+        searchTimer?.invalidate()
     }
 
     // MARK: - Browser
@@ -389,6 +419,7 @@ final class ContentViewModel: ObservableObject {
                 self.state.currentState = newState
 
                 if newState == .connected {
+                    self.isSearching = false
                     self.startAudioPipeline()
                 } else if newState == .disconnected {
                     self.stopAudioPipeline()

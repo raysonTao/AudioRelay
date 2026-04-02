@@ -27,7 +27,7 @@ class OpusEncoder {
     init {
         val enc = ConcentusEncoder(SAMPLE_RATE, CHANNELS, OpusApplication.OPUS_APPLICATION_AUDIO)
         enc.setBitrate(BITRATE)
-        enc.setSignalType(OpusSignal.OPUS_SIGNAL_MUSIC)
+        enc.setSignalType(OpusSignal.OPUS_SIGNAL_AUTO)
         encoder = enc
     }
 

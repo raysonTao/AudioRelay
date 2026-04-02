@@ -125,8 +125,8 @@ final class JitterBuffer {
     /// Pulls the next expected packet from the buffer.
     ///
     /// Includes clock drift compensation:
-    /// - Mild overflow (> target + 2): skip 1 extra packet per pull for smooth catch-up.
-    /// - Severe overflow (> target * 3): jump to recent packets to recover quickly.
+    /// - Mild overflow (> target * 1.5 + 3): skip 1 extra packet per pull.
+    /// - Severe overflow (> target * 3): jump to recent packets.
     ///
     /// - Returns: The packet at `nextExpectedSequence`, or `nil` if it has not
     ///   arrived yet (the caller should perform PLC in that case).
@@ -142,7 +142,6 @@ final class JitterBuffer {
         if packets.count > max(targetFrames * 3, 30) {
             if let maxSeq = packets.keys.max() {
                 let jumpTo = maxSeq &- UInt32(targetFrames)
-                // Remove all packets older than jumpTo
                 let keysToRemove = packets.keys.filter { $0 < jumpTo }
                 for key in keysToRemove {
                     packets.removeValue(forKey: key)
