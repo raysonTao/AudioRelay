@@ -1,100 +1,128 @@
-# AudioRelay
+# Audio Relay
 
-AudioRelay 是一款轻量级的音频中继/转发工具，旨在实现跨设备、跨网络的音频流实时传输，解决不同设备间音频互通的需求（如将电脑音频转发到手机、远程设备音频采集等）。
+将 Android 设备的系统音频实时中继到 Mac 播放。适用于将平板上的网课、视频、会议音频转发到 Mac 端耳机收听。
 
-## 功能特性
-- 🎵 低延迟音频流转发，兼顾实时性与音质
-- 🌐 支持TCP/UDP网络传输，适配不同网络场景
-- 🖥️ 跨平台兼容（Windows/macOS/Linux，需根据实际仓库补充）
-- ⚙️ 简单易配置，支持自定义音频源、传输端口、编码格式
-- 📦 轻量化设计，依赖少，部署成本低
+## 工作原理
+
+```
+Android (发送端)                         Mac (接收端)
+┌──────────────────┐    TCP/48000    ┌──────────────────┐
+│ AudioPlaybackCapture │──────────────▶│  JitterBuffer    │
+│ → Opus 编码 (96kbps) │   长度前缀帧    │  → Opus 解码     │
+│ → TCP 发送          │              │  → AVAudioEngine  │
+└──────────────────┘              └──────────────────┘
+         ▲ mDNS 服务发现 (_audiorelay._tcp.)  ▲
+```
+
+- **Android** 通过 AudioPlaybackCapture API 捕获系统音频（媒体、游戏），Opus 编码后通过 TCP 发送
+- **Mac** 通过 mDNS/Bonjour 自动发现 Android 端，接收并解码播放
+- 自适应 Jitter Buffer（100-300ms）吸收网络抖动
+- Android 端连接时自动静音本地扬声器，断开后恢复
+
+## 协议格式
+
+每个 TCP 帧：4 字节大端长度前缀 + 数据包
+
+数据包头（15 字节）：类型(1B) + 序列号(4B) + 时间戳(8B, 微秒) + 负载长度(2B)
+
+| 类型 | 值 | 说明 |
+|------|------|------|
+| Audio | 0x01 | Opus 编码的音频帧 |
+| Handshake | 0x02 | 连接握手 |
+| Heartbeat | 0x03 | 心跳保活 |
+| Config | 0x04 | 配置同步 |
+
+## 音频参数
+
+| 参数 | 值 |
+|------|------|
+| 采样率 | 48 kHz |
+| 声道 | 立体声 |
+| 编码 | Opus, 96 kbps |
+| 帧长 | 20 ms (960 samples/channel) |
+| 信号类型 | Auto（自动适配语音/音乐） |
 
 ## 环境要求
-- Python 3.7+（若为Python实现，若无则替换为对应环境，如Go 1.20+、Node.js 16+等）
-- 音频相关依赖（如 `pyaudio`、`sounddevice` 等，需匹配仓库实际依赖）
-- 网络互通：服务端与客户端需在同一网络或公网可达
 
-## 安装步骤
-### 1. 克隆仓库
+**Android 发送端：**
+- Android 10+ (API 29)
+- 需授权屏幕录制（用于 AudioPlaybackCapture）
+
+**Mac 接收端：**
+- macOS 13+
+- Homebrew 安装 libopus：`brew install opus`
+
+## 构建
+
+### Android
+
+用 Android Studio 打开 `android/` 目录，或命令行：
+
 ```bash
-git clone https://github.com/raysonTao/AudioRelay.git
-cd AudioRelay
+cd android
+./gradlew installDebug
 ```
 
-### 2. 安装依赖
-若项目基于Python，执行：
+### Mac
+
 ```bash
-pip install -r requirements.txt
-```
-若为其他语言（如Go），执行：
-```bash
-go mod download
+cd mac
+swift build
 ```
 
-## 使用说明
-### 1. 启动服务端（音频接收/转发节点）
-```bash
-# 示例：Python版本启动服务端
-python server.py --host 0.0.0.0 --port 8080 --audio-format pcm
+构建产物为 `.build/debug/AudioRelayReceiver`，可复制到 `/Applications/AudioRelay.app/Contents/MacOS/AudioRelay` 部署。
+
+## 使用
+
+1. 确保 Android 和 Mac 在同一局域网
+2. 在 Android 端打开 Audio Relay，点击开始，授权屏幕录制
+3. 在 Mac 端打开 Audio Relay，设备搜索会自动发现 Android 端
+4. 点击 Connect 连接，即可在 Mac 上听到 Android 的音频
+
+Mac 端功能：
+- **音量滑块** — 调节播放音量
+- **Noise Reduction** — 开启 de-clicker 降噪，适合听课场景
+- **设备搜索开关** — 启动时自动搜索 60 秒，也可手动控制
+
+## 项目结构
+
+```
+android/                      # Android 发送端 (Kotlin + Jetpack Compose)
+├── audio/
+│   ├── AudioCaptureManager.kt  # 系统音频捕获
+│   └── OpusEncoder.kt          # Opus 编码
+├── AudioCaptureService.kt      # 前台服务 + TCP 服务器
+└── MainActivity.kt             # UI
+
+mac/                          # Mac 接收端 (Swift + SwiftUI)
+├── Sources/AudioRelayReceiver/
+│   ├── Audio/
+│   │   ├── AudioPlayer.swift    # AVAudioEngine 播放
+│   │   ├── OpusDecoder.swift    # Opus 解码
+│   │   └── JitterBuffer.swift   # 自适应抖动缓冲
+│   ├── Network/
+│   │   ├── TcpClient.swift      # TCP 客户端
+│   │   ├── MdnsBrowser.swift    # mDNS 服务发现
+│   │   └── PacketProtocol.swift # 协议解析
+│   └── App/
+│       └── ContentView.swift    # UI + ViewModel
+├── Sources/COpus/               # libopus 系统库绑定
+└── Sources/COpusHelpers/        # opus_decoder_ctl 的 C shim
+
+docs/
+├── requirements.md             # 需求文档
+└── tech-selection.md           # 技术选型
 ```
 
-### 2. 启动客户端（音频采集/发送节点）
-```bash
-# 示例：Python版本启动客户端
-python client.py --server-ip 192.168.1.100 --server-port 8080 --audio-source mic
-```
+## 依赖
 
-### 核心参数说明
-| 参数 | 说明 | 示例值 |
-|------|------|--------|
-| `--host`/`--server-ip` | 服务端IP地址 | 0.0.0.0/192.168.1.100 |
-| `--port`/`--server-port` | 传输端口 | 8080 |
-| `--audio-format` | 音频编码格式 | pcm/mp3/wav |
-| `--audio-source` | 客户端音频源 | mic（麦克风）/speaker（系统扬声器）/file（本地文件） |
+| 组件 | 依赖 | 用途 |
+|------|------|------|
+| Android | Concentus (concentus.jar) | 纯 Java Opus 编码 |
+| Android | Jetpack Compose | UI |
+| Mac | libopus (Homebrew) | Opus 解码 |
+| Mac | Swift Package Manager | 构建 |
 
-## 配置文件（可选）
-若项目支持配置文件（如 `config.yaml`），可自定义以下参数：
-```yaml
-server:
-  host: 0.0.0.0
-  port: 8080
-  buffer_size: 1024
-audio:
-  format: pcm
-  sample_rate: 44100
-  channels: 2
-client:
-  auto_reconnect: true
-  reconnect_interval: 3 # 重连间隔（秒）
-```
+## License
 
-## 常见问题
-1. **音频延迟过高？**
-   - 降低音频缓冲区大小（`buffer_size`）
-   - 使用UDP协议（实时性优于TCP）
-   - 选择更低的采样率/声道数
-
-2. **客户端无法连接服务端？**
-   - 检查服务端是否启动，且IP/端口正确
-   - 关闭防火墙/安全组，确保端口放行
-   - 确认客户端与服务端网络互通
-
-3. **无音频输出？**
-   - 检查音频源是否正确（如麦克风权限、扬声器采集是否开启）
-   - 验证音频格式是否与服务端/客户端匹配
-
-## 贡献指南
-1. Fork 本仓库
-2. 创建功能分支（`git checkout -b feature/xxx`）
-3. 提交代码（`git commit -m 'feat: 新增xxx功能'`）
-4. 推送分支（`git push origin feature/xxx`）
-5. 发起 Pull Request
-
-## 许可证
-本项目基于 [MIT License](LICENSE) 开源（若仓库无LICENSE文件，可注明“待补充”或根据仓库实际协议调整）。
-
-## 致谢
-感谢所有为音频传输、音频处理领域提供开源工具/库的开发者（可补充具体依赖库/项目）。
-
----
-若有问题或建议，欢迎提交 [Issue](https://github.com/raysonTao/AudioRelay/issues) 反馈！
+[Apache License 2.0](LICENSE)
