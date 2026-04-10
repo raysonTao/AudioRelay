@@ -14,6 +14,8 @@ final class AudioPlayer {
 
     private var jitterBuffer: JitterBuffer?
     private var decoder: OpusDecoder?
+    private let resetLock = NSLock()
+    private var pendingStreamReset = false
 
     private(set) var audioLevel: Float = 0
     private(set) var isPlaying = false
@@ -28,12 +30,19 @@ final class AudioPlayer {
     /// When enabled, applies de-clicker to reduce crackling artifacts.
     var noiseReductionEnabled: Bool = false
 
+    func requestStreamReset() {
+        resetLock.lock()
+        pendingStreamReset = true
+        resetLock.unlock()
+    }
+
     func start(jitterBuffer: JitterBuffer, decoder: OpusDecoder) {
         guard !isPlaying else { return }
 
         self.jitterBuffer = jitterBuffer
         self.decoder = decoder
         self.primed = false
+        clearPendingStreamReset()
 
         // AVAudioEngine on macOS requires non-interleaved (deinterleaved) format.
         let audioFormat = AVAudioFormat(
@@ -54,14 +63,24 @@ final class AudioPlayer {
                   let jitterBuffer = self.jitterBuffer,
                   let decoder = self.decoder else {
                 let abl = UnsafeMutableAudioBufferListPointer(audioBufferList)
-                for buf in abl {
-                    if let ptr = buf.mData { memset(ptr, 0, Int(buf.mDataByteSize)) }
-                }
+                Self.zeroBuffers(abl)
                 return noErr
             }
 
             let abl = UnsafeMutableAudioBufferListPointer(audioBufferList)
             let frames = Int(frameCount)
+
+            if self.consumePendingStreamReset() {
+                decoder.resetState()
+                self.primed = false
+                self.audioLevel = 0
+                residual.removeAll(keepingCapacity: true)
+                prevSample = (0, 0)
+                emptyPullCount = 0
+                Self.zeroBuffers(abl)
+                print("[AudioPlayer] Stream reset applied, waiting for pre-buffer...")
+                return noErr
+            }
 
             // Pre-buffer: output silence until enough packets accumulate.
             if !self.primed {
@@ -69,9 +88,7 @@ final class AudioPlayer {
                     self.primed = true
                     print("[AudioPlayer] Pre-buffer reached (\(jitterBuffer.packetCount) pkts), starting playback")
                 } else {
-                    for buf in abl {
-                        if let ptr = buf.mData { memset(ptr, 0, Int(buf.mDataByteSize)) }
-                    }
+                    Self.zeroBuffers(abl)
                     return noErr
                 }
             }
@@ -195,6 +212,7 @@ final class AudioPlayer {
         isPlaying = false
         audioLevel = 0
         primed = false
+        clearPendingStreamReset()
     }
 
     private var configChangeObserver: NSObjectProtocol?
@@ -230,5 +248,28 @@ final class AudioPlayer {
         }
         jitterBuffer = nil
         decoder = nil
+    }
+
+    private func consumePendingStreamReset() -> Bool {
+        resetLock.lock()
+        defer { resetLock.unlock() }
+
+        let shouldReset = pendingStreamReset
+        pendingStreamReset = false
+        return shouldReset
+    }
+
+    private func clearPendingStreamReset() {
+        resetLock.lock()
+        pendingStreamReset = false
+        resetLock.unlock()
+    }
+
+    private static func zeroBuffers(_ abl: UnsafeMutableAudioBufferListPointer) {
+        for buf in abl {
+            if let ptr = buf.mData {
+                memset(ptr, 0, Int(buf.mDataByteSize))
+            }
+        }
     }
 }

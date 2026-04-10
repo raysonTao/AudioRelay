@@ -5,6 +5,7 @@ import android.media.AudioFormat
 import android.media.AudioPlaybackCaptureConfiguration
 import android.media.AudioRecord
 import android.media.projection.MediaProjection
+import android.os.SystemClock
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -23,6 +24,9 @@ class AudioCaptureManager {
 
         /** Total interleaved shorts per frame */
         private const val SAMPLES_PER_FRAME = FRAME_SIZE * CHANNELS // 1920
+
+        /** Gaps far larger than a 20 ms frame usually mean pause/seek/reconfigure on the source. */
+        private const val DISCONTINUITY_GAP_MS = 200L
     }
 
     private var audioRecord: AudioRecord? = null
@@ -35,7 +39,11 @@ class AudioCaptureManager {
      * @param mediaProjection A granted MediaProjection instance.
      * @param onPcmData Callback invoked with each PCM frame (1920 interleaved shorts at 48kHz stereo).
      */
-    fun start(mediaProjection: MediaProjection, onPcmData: (ShortArray) -> Unit) {
+    fun start(
+        mediaProjection: MediaProjection,
+        onPcmData: (ShortArray) -> Unit,
+        onDiscontinuity: () -> Unit = {}
+    ) {
         val captureConfig = AudioPlaybackCaptureConfiguration.Builder(mediaProjection)
             .addMatchingUsage(AudioAttributes.USAGE_MEDIA)
             .addMatchingUsage(AudioAttributes.USAGE_GAME)
@@ -67,17 +75,45 @@ class AudioCaptureManager {
         record.startRecording()
 
         captureJob = scope.launch {
-            val buffer = ShortArray(SAMPLES_PER_FRAME)
+            val frameBuffer = ShortArray(SAMPLES_PER_FRAME)
+            var bufferedSamples = 0
+            var lastFrameCompletedAtNs = 0L
+            var discontinuityPending = true
+
             while (isActive) {
-                val shortsRead = record.read(buffer, 0, SAMPLES_PER_FRAME)
-                if (shortsRead == SAMPLES_PER_FRAME) {
-                    onPcmData(buffer.copyOf())
+                val remaining = SAMPLES_PER_FRAME - bufferedSamples
+                val shortsRead = record.read(frameBuffer, bufferedSamples, remaining)
+                val nowNs = SystemClock.elapsedRealtimeNanos()
+
+                if (shortsRead > 0) {
+                    if (bufferedSamples == 0 &&
+                        lastFrameCompletedAtNs != 0L &&
+                        (nowNs - lastFrameCompletedAtNs) / 1_000_000L > DISCONTINUITY_GAP_MS
+                    ) {
+                        discontinuityPending = true
+                    }
+
+                    bufferedSamples += shortsRead
+
+                    if (bufferedSamples == SAMPLES_PER_FRAME) {
+                        if (discontinuityPending) {
+                            onDiscontinuity()
+                            discontinuityPending = false
+                        }
+                        onPcmData(frameBuffer.copyOf())
+                        bufferedSamples = 0
+                        lastFrameCompletedAtNs = nowNs
+                    }
+                } else if (shortsRead == 0) {
+                    if (lastFrameCompletedAtNs != 0L &&
+                        (nowNs - lastFrameCompletedAtNs) / 1_000_000L > DISCONTINUITY_GAP_MS
+                    ) {
+                        discontinuityPending = true
+                    }
                 } else if (shortsRead < 0) {
                     // Read error; stop capture
                     break
                 }
-                // If shortsRead is positive but less than SAMPLES_PER_FRAME,
-                // we discard the partial frame and continue reading.
             }
         }
     }

@@ -5,6 +5,9 @@ android/app/build/
 android/local.properties
 android/.idea/
 *.iml
+AGENTS.md
+android/gradle/wrapper/gradle-wrapper.jar
+android/gradlew.bat
 
 # Mac
 mac/.build/

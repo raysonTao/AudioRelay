@@ -433,6 +433,10 @@ final class ContentViewModel: ObservableObject {
         tcpClient.onPacketReceived = { [weak self] packet in
             self?.handleAudioPacket(packet)
         }
+
+        tcpClient.onStreamReset = { [weak self] in
+            self?.handleStreamReset(reason: "sender requested reset")
+        }
     }
 
     // MARK: - Discovery
@@ -490,12 +494,39 @@ final class ContentViewModel: ObservableObject {
         audioPlayer.stop()
         jitterBuffer.reset()
         opusDecoder = nil
+        lastAudioPacketTimestamp = nil
     }
 
     /// Clock offset calibrated from first packet (Android time - Mac time).
     private var clockOffsetMicros: Int64?
+    private var lastAudioPacketTimestamp: UInt64?
+
+    private func handleStreamReset(reason: String) {
+        print("[ContentViewModel] Stream reset: \(reason)")
+        jitterBuffer.reset()
+        audioPlayer.requestStreamReset()
+        clockOffsetMicros = nil
+        lastAudioPacketTimestamp = nil
+
+        DispatchQueue.main.async {
+            self.state.bufferLevel = 0
+            self.state.audioLevel = 0
+            self.state.latencyMs = 0
+            self.objectWillChange.send()
+        }
+    }
 
     private func handleAudioPacket(_ packet: AudioPacket) {
+        if let lastTimestamp = lastAudioPacketTimestamp {
+            let timestampRolledBack = packet.timestamp < lastTimestamp
+            let deltaMicros = timestampRolledBack ? 0 : packet.timestamp - lastTimestamp
+            if timestampRolledBack || deltaMicros > 200_000 {
+                let deltaMs = timestampRolledBack ? 0 : Double(deltaMicros) / 1000.0
+                handleStreamReset(reason: String(format: "audio timestamp gap %.0f ms", deltaMs))
+            }
+        }
+        lastAudioPacketTimestamp = packet.timestamp
+
         let jitterPacket = JitterBuffer.AudioPacket(
             sequenceNumber: packet.sequenceNumber,
             timestamp: packet.timestamp,

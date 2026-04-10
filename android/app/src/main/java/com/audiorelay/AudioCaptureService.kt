@@ -70,6 +70,7 @@ class AudioCaptureService : Service() {
     private var audioCaptureManager: AudioCaptureManager? = null
     private var opusEncoder: OpusEncoder? = null
     private var mediaProjection: MediaProjection? = null
+    private val encoderLock = Any()
 
     // Volume management
     private var audioManager: AudioManager? = null
@@ -143,7 +144,9 @@ class AudioCaptureService : Service() {
                 }
 
                 // Initialize Opus encoder
-                opusEncoder = OpusEncoder()
+                synchronized(encoderLock) {
+                    opusEncoder = OpusEncoder()
+                }
 
                 // Initialize TCP server with client connect/disconnect callbacks
                 val server = TcpStreamServer(SERVER_PORT).apply {
@@ -162,9 +165,11 @@ class AudioCaptureService : Service() {
                 }
 
                 // Start audio capture with callback that encodes and sends
-                capture.start(mediaProjection!!) { pcmFrame ->
-                    processAudioFrame(pcmFrame)
-                }
+                capture.start(
+                    mediaProjection = mediaProjection!!,
+                    onPcmData = { pcmFrame -> processAudioFrame(pcmFrame) },
+                    onDiscontinuity = { requestStreamReset("capture discontinuity") }
+                )
 
                 _state.value = _state.value.copy(serviceState = ServiceState.RUNNING)
                 Log.i(TAG, "Pipeline started successfully")
@@ -200,29 +205,35 @@ class AudioCaptureService : Service() {
      * Process a single PCM frame: encode to Opus and send to connected client.
      */
     private fun processAudioFrame(pcmFrame: ShortArray) {
-        val encoder = opusEncoder ?: return
+        updateAudioLevel(pcmFrame)
+
         val server = tcpStreamServer ?: return
+        if (!server.clientConnected.value) return
 
         try {
-            val opusData = encoder.encode(pcmFrame)
+            val opusData = synchronized(encoderLock) {
+                opusEncoder?.encode(pcmFrame)
+            } ?: return
             server.sendAudioData(opusData)
-
-            // Calculate audio level from PCM
-            var sumSquares = 0.0
-            for (sample in pcmFrame) {
-                val normalized = sample.toFloat() / Short.MAX_VALUE
-                sumSquares += normalized * normalized
-            }
-            val rms = kotlin.math.sqrt(sumSquares / pcmFrame.size).toFloat()
-            _state.value = _state.value.copy(audioLevel = rms)
         } catch (e: Exception) {
             Log.e(TAG, "Encode/send error", e)
         }
     }
 
+    private fun updateAudioLevel(pcmFrame: ShortArray) {
+        var sumSquares = 0.0
+        for (sample in pcmFrame) {
+            val normalized = sample.toFloat() / Short.MAX_VALUE
+            sumSquares += normalized * normalized
+        }
+        val rms = kotlin.math.sqrt(sumSquares / pcmFrame.size).toFloat()
+        _state.value = _state.value.copy(audioLevel = rms)
+    }
+
     private fun onClientConnected() {
         Log.i(TAG, "Client connected, muting local audio")
         muteLocalAudio()
+        requestStreamReset("client connected")
         _state.value = _state.value.copy(isMuted = true)
     }
 
@@ -230,6 +241,16 @@ class AudioCaptureService : Service() {
         Log.i(TAG, "Client disconnected, restoring local audio")
         restoreLocalAudio()
         _state.value = _state.value.copy(isMuted = false)
+    }
+
+    private fun requestStreamReset(reason: String) {
+        synchronized(encoderLock) {
+            opusEncoder?.close()
+            opusEncoder = OpusEncoder()
+        }
+
+        tcpStreamServer?.sendStreamReset()
+        Log.i(TAG, "Stream reset requested: $reason")
     }
 
     private fun muteLocalAudio() {
@@ -295,8 +316,10 @@ class AudioCaptureService : Service() {
         audioCaptureManager?.stop()
         audioCaptureManager = null
 
-        opusEncoder?.close()
-        opusEncoder = null
+        synchronized(encoderLock) {
+            opusEncoder?.close()
+            opusEncoder = null
+        }
 
         tcpStreamServer?.stop()
         tcpStreamServer = null

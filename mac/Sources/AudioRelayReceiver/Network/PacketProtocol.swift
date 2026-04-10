@@ -1,5 +1,9 @@
 import Foundation
 
+enum ConfigCommand: UInt8 {
+    case streamReset = 0x01
+}
+
 // MARK: - Packet Serialization
 
 enum PacketProtocol {
@@ -150,5 +154,13 @@ final class PacketFramer {
     /// Discards all buffered data.
     func reset() {
         buffer.removeAll(keepingCapacity: true)
+    }
+}
+
+extension AudioPacket {
+
+    var configCommand: ConfigCommand? {
+        guard packetType == .config, let rawValue = payload.first else { return nil }
+        return ConfigCommand(rawValue: rawValue)
     }
 }

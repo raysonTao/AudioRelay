@@ -16,6 +16,9 @@ final class TcpClient {
     /// Called when the connection state changes (on the internal queue).
     var onStateChanged: ((ConnectionState.State) -> Void)?
 
+    /// Called when the sender requests the receiver to flush decoder/buffer state.
+    var onStreamReset: (() -> Void)?
+
     // MARK: - Private state
 
     private var connection: NWConnection?
@@ -156,7 +159,12 @@ final class TcpClient {
             sendHeartbeatReply()
 
         case .config:
-            print("[TcpClient] Received config packet (seq: \(packet.sequenceNumber))")
+            if packet.configCommand == .streamReset {
+                print("[TcpClient] Received stream reset (seq: \(packet.sequenceNumber))")
+                onStreamReset?()
+            } else {
+                print("[TcpClient] Received config packet (seq: \(packet.sequenceNumber))")
+            }
         }
     }
 

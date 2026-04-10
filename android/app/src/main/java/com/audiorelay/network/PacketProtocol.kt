@@ -2,6 +2,7 @@ package com.audiorelay.network
 
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
+import java.util.concurrent.atomic.AtomicInteger
 
 enum class PacketType(val value: Byte) {
     AUDIO(0x01),
@@ -13,6 +14,16 @@ enum class PacketType(val value: Byte) {
         fun fromByte(b: Byte): PacketType =
             entries.firstOrNull { it.value == b }
                 ?: throw IllegalArgumentException("Unknown packet type: $b")
+    }
+}
+
+enum class ConfigCommand(val value: Byte) {
+    STREAM_RESET(0x01);
+
+    companion object {
+        fun fromByte(b: Byte): ConfigCommand =
+            entries.firstOrNull { it.value == b }
+                ?: throw IllegalArgumentException("Unknown config command: $b")
     }
 }
 
@@ -164,9 +175,12 @@ class PacketFramer {
     }
 }
 
-private var sequenceCounter: UInt = 0u
+private val controlSequenceCounter = AtomicInteger(0)
+private val audioSequenceCounter = AtomicInteger(0)
 
-private fun nextSequence(): UInt = sequenceCounter++
+private fun nextControlSequence(): UInt = controlSequenceCounter.getAndIncrement().toUInt()
+
+private fun nextAudioSequence(): UInt = audioSequenceCounter.getAndIncrement().toUInt()
 
 private fun currentTimestampMicros(): ULong =
     (System.currentTimeMillis() * 1000).toULong()
@@ -181,7 +195,7 @@ fun createHandshake(): AudioPacket {
     )
     return AudioPacket(
         packetType = PacketType.HANDSHAKE,
-        sequenceNumber = nextSequence(),
+        sequenceNumber = nextControlSequence(),
         timestamp = currentTimestampMicros(),
         payload = payload.toByteArray()
     )
@@ -190,7 +204,7 @@ fun createHandshake(): AudioPacket {
 fun createHeartbeat(): AudioPacket {
     return AudioPacket(
         packetType = PacketType.HEARTBEAT,
-        sequenceNumber = nextSequence(),
+        sequenceNumber = nextControlSequence(),
         timestamp = currentTimestampMicros(),
         payload = ByteArray(0)
     )
@@ -199,8 +213,17 @@ fun createHeartbeat(): AudioPacket {
 fun createAudioPacket(opusData: ByteArray): AudioPacket {
     return AudioPacket(
         packetType = PacketType.AUDIO,
-        sequenceNumber = nextSequence(),
+        sequenceNumber = nextAudioSequence(),
         timestamp = currentTimestampMicros(),
         payload = opusData
+    )
+}
+
+fun createStreamResetPacket(): AudioPacket {
+    return AudioPacket(
+        packetType = PacketType.CONFIG,
+        sequenceNumber = nextControlSequence(),
+        timestamp = currentTimestampMicros(),
+        payload = byteArrayOf(ConfigCommand.STREAM_RESET.value)
     )
 }

@@ -174,6 +174,10 @@ class TcpStreamServer(private val port: Int = 48000) {
         sendPacket(packet)
     }
 
+    fun sendStreamReset() {
+        sendPacket(createStreamResetPacket())
+    }
+
     /**
      * Send any packet using the protocol framing.
      */
